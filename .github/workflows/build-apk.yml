@@ -1,0 +1,306 @@
+
+name: Gerar APK Marketplace PRO
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar codigo
+        uses: actions/checkout@v4
+
+      - name: Instalar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Criar projeto Android
+        run: flutter create --org com.marketplacepro --project-name marketplace_pro app
+
+      - name: Instalar banco de dados local
+        working-directory: app
+        run: flutter pub add sqflite path
+
+      - name: Criar aplicativo
+        run: |
+          cat > app/lib/main.dart <<'EOF'
+import 'package:flutter/material.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart' as p;
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const MarketplaceApp());
+}
+
+class LocalDB {
+  static Future<Database> get db async {
+    return openDatabase(
+      p.join(await getDatabasesPath(), 'marketplace_pro.db'),
+      version: 1,
+      onCreate: (database, version) async {
+        await database.execute('''
+          CREATE TABLE historico(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            data TEXT,
+            custo REAL,
+            venda REAL,
+            lucro REAL,
+            margem REAL
+          )
+        ''');
+      },
+    );
+  }
+
+  static Future<void> salvar(
+      double custo, double venda, double lucro, double margem) async {
+    final database = await db;
+    await database.insert('historico', {
+      'data': DateTime.now().toIso8601String(),
+      'custo': custo,
+      'venda': venda,
+      'lucro': lucro,
+      'margem': margem,
+    });
+  }
+
+  static Future<List<Map<String, dynamic>>> historico() async {
+    final database = await db;
+    return database.query('historico', orderBy: 'id DESC', limit: 20);
+  }
+}
+
+class MarketplaceApp extends StatelessWidget {
+  const MarketplaceApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Marketplace PRO',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF137A55),
+        ),
+        useMaterial3: true,
+      ),
+      home: const CalculatorPage(),
+    );
+  }
+}
+
+class CalculatorPage extends StatefulWidget {
+  const CalculatorPage({super.key});
+
+  @override
+  State<CalculatorPage> createState() => _CalculatorPageState();
+}
+
+class _CalculatorPageState extends State<CalculatorPage> {
+  final custo = TextEditingController();
+  final venda = TextEditingController();
+  final taxa = TextEditingController(text: '15');
+  final tarifa = TextEditingController(text: '4');
+  final frete = TextEditingController(text: '0');
+  final embalagem = TextEditingController(text: '0');
+
+  double lucro = 0;
+  double margem = 0;
+  double comissao = 0;
+  bool calculado = false;
+
+  double valor(TextEditingController c) =>
+      double.tryParse(c.text.replaceAll(',', '.')) ?? 0;
+
+  void calcular() {
+    final c = valor(custo);
+    final v = valor(venda);
+
+    if (c < 0 || v <= 0 || valor(taxa) < 0 ||
+        valor(tarifa) < 0 || valor(frete) < 0 ||
+        valor(embalagem) < 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Confira os valores informados.')),
+      );
+      return;
+    }
+
+    setState(() {
+      comissao = v * valor(taxa) / 100;
+      lucro = v - c - comissao - valor(tarifa)
+          - valor(frete) - valor(embalagem);
+      margem = lucro / v * 100;
+      calculado = true;
+    });
+  }
+
+  Future<void> salvar() async {
+    await LocalDB.salvar(
+      valor(custo), valor(venda), lucro, margem);
+    setState(() {});
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Simulação salva no celular!')),
+    );
+  }
+
+  Widget campo(String titulo, TextEditingController controller,
+      {String dica = '0,00'}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextField(
+        controller: controller,
+        keyboardType: const TextInputType.numberWithOptions(
+            decimal: true),
+        decoration: InputDecoration(
+          labelText: titulo,
+          prefixText: 'R\$ ',
+          hintText: dica,
+          border: const OutlineInputBorder(),
+        ),
+        onChanged: (_) => setState(() => calculado = false),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    custo.dispose();
+    venda.dispose();
+    taxa.dispose();
+    tarifa.dispose();
+    frete.dispose();
+    embalagem.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF137A55),
+        foregroundColor: Colors.white,
+        title: const Text('Marketplace PRO'),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(18),
+        children: [
+          const Text('Calculadora de lucro',
+              style: TextStyle(fontSize: 23,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          const Text('Calcule sua lucratividade mesmo sem internet.'),
+          const SizedBox(height: 22),
+          campo('Custo do produto', custo),
+          campo('Preço de venda', venda),
+          campo('Comissão da plataforma (%)', taxa),
+          campo('Tarifa fixa', tarifa),
+          campo('Frete pago por você', frete),
+          campo('Embalagem', embalagem),
+          SizedBox(
+            height: 50,
+            child: FilledButton.icon(
+              onPressed: calcular,
+              icon: const Icon(Icons.calculate),
+              label: const Text('CALCULAR LUCRO'),
+            ),
+          ),
+          if (calculado) ...[
+            const SizedBox(height: 22),
+            Card(
+              color: lucro >= 0
+                  ? Colors.green.shade50
+                  : Colors.red.shade50,
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('SEU RESULTADO',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 12),
+                    Text(
+                      'R\$ ${lucro.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: 32,
+                        fontWeight: FontWeight.bold,
+                        color: lucro >= 0
+                            ? Colors.green.shade800
+                            : Colors.red.shade800,
+                      ),
+                    ),
+                    Text('Lucro líquido estimado'),
+                    const Divider(),
+                    Text('Comissão: R\$ ${comissao.toStringAsFixed(2)}'),
+                    Text('Margem: ${margem.toStringAsFixed(2)}%'),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: salvar,
+                        child: const Text('Salvar simulação'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 28),
+          const Text('Últimas simulações',
+              style: TextStyle(fontSize: 19,
+                  fontWeight: FontWeight.bold)),
+          FutureBuilder(
+            future: LocalDB.historico(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) {
+                return const CircularProgressIndicator();
+              }
+              final itens = snapshot.data!;
+              if (itens.isEmpty) {
+                return const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Text('Nenhuma simulação salva ainda.'),
+                );
+              }
+              return Column(
+                children: itens.map((item) {
+                  return ListTile(
+                    leading: const Icon(Icons.receipt_long),
+                    title: Text(
+                      'Lucro: R\$ ${(item['lucro'] as num).toStringAsFixed(2)}'),
+                    subtitle: Text(
+                      'Venda: R\$ ${(item['venda'] as num).toStringAsFixed(2)}'
+                      ' | Margem: ${(item['margem'] as num).toStringAsFixed(2)}%'),
+                  );
+                }).toList(),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+EOF
+
+      - name: Compilar APK
+        working-directory: app
+        run: flutter build apk --release
+
+      - name: Disponibilizar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Marketplace-PRO-APK
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
