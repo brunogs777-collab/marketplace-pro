@@ -40,3 +40,5 @@ jobs:
           name: Marketplace-PRO-APK
           path: app/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30
+      - name: Copiar aplicativo Marketplace PRO
+        run: cp lib/main.dart app/lib/main.dart
