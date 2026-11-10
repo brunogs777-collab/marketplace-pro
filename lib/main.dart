@@ -12,7 +12,7 @@ class LocalDB {
   static Future<Database> get db async {
     return openDatabase(
       p.join(await getDatabasesPath(), 'marketplace_pro.db'),
-      version: 1,
+      version: 2,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE historico (
@@ -23,9 +23,23 @@ class LocalDB {
             venda REAL,
             lucro REAL,
             margem REAL,
-            data TEXT
+            data TEXT,
+            comissao_percentual REAL NOT NULL DEFAULT 0,
+            tarifa_fixa REAL NOT NULL DEFAULT 0,
+            frete REAL NOT NULL DEFAULT 0,
+            embalagem REAL NOT NULL DEFAULT 0,
+            valor_comissao REAL NOT NULL DEFAULT 0
           )
         ''');
+      },
+      onUpgrade: (database, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await database.execute('ALTER TABLE historico ADD COLUMN comissao_percentual REAL NOT NULL DEFAULT 0');
+          await database.execute('ALTER TABLE historico ADD COLUMN tarifa_fixa REAL NOT NULL DEFAULT 0');
+          await database.execute('ALTER TABLE historico ADD COLUMN frete REAL NOT NULL DEFAULT 0');
+          await database.execute('ALTER TABLE historico ADD COLUMN embalagem REAL NOT NULL DEFAULT 0');
+          await database.execute('ALTER TABLE historico ADD COLUMN valor_comissao REAL NOT NULL DEFAULT 0');
+        }
       },
     );
   }
@@ -70,6 +84,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int pagina = 0;
+  int versaoHistorico = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -78,13 +93,16 @@ class _HomePageState extends State<HomePage> {
         index: pagina,
         children: const [
           CalculatorPage(),
-          HistoryPage(),
+          HistoryPage(key: ValueKey(versaoHistorico)),
         ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: pagina,
         onDestinationSelected: (value) {
-          setState(() => pagina = value);
+          setState(() {
+            pagina = value;
+            if (value == 1) versaoHistorico++;
+          });
         },
         destinations: const [
           NavigationDestination(
@@ -132,7 +150,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
     return 'R\$ ${valor.toStringAsFixed(2).replaceAll('.', ',')}';
   }
 
-  void calcular() {
+  Future<void> calcular() async {
     final c = numero(custo);
     final v = numero(venda);
     final t = numero(taxa);
@@ -157,24 +175,32 @@ class _CalculatorPageState extends State<CalculatorPage> {
       margem = lucro / v * 100;
       calculado = true;
     });
+
+    // Salva cada cálculo automaticamente no banco local.
+    await salvar();
   }
 
   Future<void> salvar() async {
     await LocalDB.salvar({
-      'produto': produto.text,
+      'produto': produto.text.trim(),
       'plataforma': plataforma,
       'custo': numero(custo),
       'venda': numero(venda),
       'lucro': lucro,
       'margem': margem,
       'data': DateTime.now().toIso8601String(),
+      'comissao_percentual': numero(taxa),
+      'tarifa_fixa': numero(tarifa),
+      'frete': numero(frete),
+      'embalagem': numero(embalagem),
+      'valor_comissao': comissao,
     });
 
     if (!mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Simulação salva no celular!'),
+        content: Text('Cálculo salvo automaticamente no histórico!'),
       ),
     );
   }
@@ -321,13 +347,17 @@ class _CalculatorPageState extends State<CalculatorPage> {
                     Text('Comissão: ${dinheiro(comissao)}'),
                     Text('Margem de lucro: ${margem.toStringAsFixed(2)}%'),
                     const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.icon(
-                        onPressed: salvar,
-                        icon: const Icon(Icons.save),
-                        label: const Text('SALVAR SIMULAÇÃO'),
-                      ),
+                    const Row(
+                      children: [
+                        Icon(Icons.check_circle, color: Colors.green, size: 18),
+                        SizedBox(width: 7),
+                        Expanded(
+                          child: Text(
+                            'Cálculo salvo automaticamente no histórico',
+                            style: TextStyle(color: Colors.green, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -354,6 +384,19 @@ class HistoryPage extends StatefulWidget {
 }
 
 class _HistoryPageState extends State<HistoryPage> {
+  late Future<List<Map<String, dynamic>>> _historico;
+
+  @override
+  void initState() {
+    super.initState();
+    _historico = LocalDB.listar();
+  }
+
+  Future<void> _atualizar() async {
+    setState(() => _historico = LocalDB.listar());
+    await _historico;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -362,10 +405,28 @@ class _HistoryPageState extends State<HistoryPage> {
           'Histórico de vendas',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Atualizar histórico',
+            onPressed: _atualizar,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
       ),
-      body: FutureBuilder<List<Map<String, dynamic>>>(
-        future: LocalDB.listar(),
+      body: RefreshIndicator(
+        onRefresh: _atualizar,
+        child: FutureBuilder<List<Map<String, dynamic>>>(
+        future: _historico,
         builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return ListView(
+              children: const [
+                SizedBox(height: 180),
+                Center(child: Text('Erro ao carregar o histórico.')),
+              ],
+            );
+          }
+
           if (!snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
@@ -409,6 +470,7 @@ class _HistoryPageState extends State<HistoryPage> {
           );
         },
       ),
+        ),
     );
   }
 }
