@@ -1,4 +1,3 @@
-
 name: Gerar APK Marketplace PRO
 
 on:
@@ -30,6 +29,9 @@ jobs:
         working-directory: app
         run: flutter pub add sqflite path
 
+      - name: Copiar aplicativo Marketplace PRO
+        run: cp lib/main.dart app/lib/main.dart
+
       - name: Compilar APK
         working-directory: app
         run: flutter build apk --release
@@ -40,21 +42,3 @@ jobs:
           name: Marketplace-PRO-APK
           path: app/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30
-      - name: Copiar aplicativo Marketplace PRO
-        run: cp lib/main.dart app/lib/main.dart
-      - name: Instalar dependencias
-        working-directory: app
-        run: flutter pub add sqflite path
-              - name: Copiar aplicativo Marketplace PRO
-        run: cp lib/main.dart app/lib/main.dart
-              - name: Instalar dependencias
-        working-directory: app
-        run: flutter pub add sqflite path
-
-      - name: Copiar aplicativo Marketplace PRO
-        run: cp lib/main.dart app/lib/main.dart
-
-      - name: Compilar APK
-        working-directory: app
-        run: flutter build apk --release
-        
