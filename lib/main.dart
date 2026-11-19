@@ -91,8 +91,8 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       body: IndexedStack(
         index: pagina,
-        children: const [
-          CalculatorPage(),
+        children: [
+          const CalculatorPage(),
           HistoryPage(key: ValueKey(versaoHistorico)),
         ],
       ),
